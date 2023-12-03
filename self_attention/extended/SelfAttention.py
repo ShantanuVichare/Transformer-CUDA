@@ -8,10 +8,11 @@ import self_attention
 class SelfAttentionFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, *args):
-        vkq = args[:3]
+        mask = args[8]
         consts = args[9]
         outputs = self_attention.forward(vkq, weights, mask, consts)
-        ctx.save_for_backward(*outputs[1:])
+        ctx.weights = weights
+        ctx.consts = consts
         return outputs[0]
 
     @staticmethod
@@ -19,7 +20,6 @@ class SelfAttentionFunction(torch.autograd.Function):
         outputs = self_attention.backward(
             grad_out.contiguous(), *ctx.saved_tensors, ctx.vkq, ctx.weights, ctx.consts
         )
-        outputs += [None, None]
         return tuple(outputs)
 
 
