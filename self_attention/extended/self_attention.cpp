@@ -12,6 +12,14 @@ std::vector<torch::Tensor> self_attention_forward(
     torch::Tensor values = vkq[0], keys = vkq[1], query = vkq[2];
     torch::Tensor W_values = weights[0], W_keys = weights[1], W_query = weights[2], W_out = weights[3], B_out = weights[4];
 
+    values = values.reshape({N, seq_len, heads, head_dim}).transpose(1, 2).reshape({N * heads, seq_len, head_dim});
+    keys = keys.reshape({N, seq_len, heads, head_dim}).transpose(1, 2).reshape({N * heads, seq_len, head_dim});
+    query = query.reshape({N, seq_len, heads, head_dim}).transpose(1, 2).reshape({N * heads, seq_len, head_dim});
+
+    torch::Tensor values_mod = torch::matmul(values, W_values.transpose(0, 1));
+    torch::Tensor keys_mod = torch::matmul(keys, W_keys.transpose(0, 1));
+    torch::Tensor query_mod = torch::matmul(query, W_query.transpose(0, 1));
+
     // Attention score computation
     torch::Tensor energy = torch::bmm(query_mod, keys_mod.transpose(-2, -1)) / sqrt(static_cast<float>(embed_size));
 
@@ -34,6 +42,8 @@ std::vector<torch::Tensor> self_attention_forward(
         scores,
         attention,
         values_mod,
+        keys_mod,
+        query_mod,
     };
 }
 
@@ -73,6 +83,15 @@ std::vector<torch::Tensor> self_attention_backward(
 
     torch::Tensor grad_B_out = grad_out.sum(std::vector<int64_t>({0, 1}));
 
+    torch::Tensor scores_temp = scores.reshape({N, heads, seq_len, head_dim}).transpose(1, 2).reshape({N, seq_len, heads * head_dim});
+    torch::Tensor grad_W_out = torch::matmul(grad_out.transpose(1, 2), scores_temp).sum(0);
+    torch::Tensor grad_scores = torch::matmul(grad_out, W_out).reshape({N, seq_len, heads, head_dim}).transpose(1, 2).reshape({N * heads, seq_len, head_dim});
+
+    torch::Tensor grad_attention = torch::bmm(grad_scores, values_mod.transpose(-2, -1));
+    torch::Tensor grad_values_mod = torch::bmm(attention.transpose(-2, -1), grad_scores);
+    torch::Tensor grad_energy = grad_attention * d_softmax(attention, grad_attention) / sqrt(static_cast<float>(embed_size));
+
+    torch::Tensor grad_keys_mod = torch::bmm(grad_energy.transpose(-2, -1), query_mod);
     torch::Tensor grad_query_mod = torch::bmm(grad_energy, keys_mod);
 
     torch::Tensor values_temp = values.reshape({N, seq_len, heads, head_dim}).transpose(1, 2).reshape({N * heads, seq_len, head_dim});
